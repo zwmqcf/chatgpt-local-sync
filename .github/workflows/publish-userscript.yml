@@ -18,15 +18,26 @@ jobs:
       - name: Rebuild userscript
         shell: bash
         run: |
-          cat .publish-payload/part-*.b64 | base64 -d | gzip -d > chatgpt-local-sync.user.js
+          for f in .publish-payload/part-*.b64; do
+            base64 -d "$f"
+          done | gzip -d > chatgpt-local-sync.user.js
+
           test -s chatgpt-local-sync.user.js
+          test "$(wc -l < chatgpt-local-sync.user.js)" -ge 5600
+
+          if ! grep -q '^// @license' chatgpt-local-sync.user.js; then
+            sed -i '/^\/\/ @grant/a // @license      MIT' chatgpt-local-sync.user.js
+          fi
+
           grep -q '@version      2.9.3' chatgpt-local-sync.user.js
           grep -q '@license      MIT' chatgpt-local-sync.user.js
+
           rm -rf .publish-payload
           rm -f .publish-trigger
           rm -f .github/workflows/publish-userscript.yml
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Publish reconstructed userscript v2.9.3"
+          git commit -m "Publish full userscript v2.9.3"
           git push
