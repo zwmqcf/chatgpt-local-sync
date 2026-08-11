@@ -1,5 +1,12 @@
 # AI 对话流转
 
+## 下载与安装
+
+- **推荐安装：** [🚀 点击这里直接安装用户脚本](https://raw.githubusercontent.com/zwmqcf/chatgpt-local-sync/main/chatgpt-local-sync.user.js)
+- **下载压缩包：** [⬇️ 点击这里下载最新版 ZIP](https://github.com/zwmqcf/chatgpt-local-sync/archive/refs/heads/main.zip)
+
+如果点击“直接安装”后看到的是代码页面，请先安装 ScriptCat 或 Tampermonkey 浏览器扩展，再重新点击安装链接。
+
 一个把 ChatGPT 对话持续同步到电脑本地、自动整理，并在需要时重新提取出来继续使用的浏览器用户脚本。
 
 它不是每次重新导出一整份聊天记录，而是维护一个会持续更新的本地对话资料库：已经保存过的内容不会反复处理，有新增或变化时再继续同步。
