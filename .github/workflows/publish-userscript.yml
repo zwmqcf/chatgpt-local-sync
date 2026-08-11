@@ -1,0 +1,30 @@
+name: Publish userscript
+
+on:
+  push:
+    paths:
+      - ".github/workflows/publish-userscript.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild userscript
+        shell: bash
+        run: |
+          cat .publish-payload/part-*.b64 | base64 -d | gzip -d > chatgpt-local-sync.user.js
+          test -s chatgpt-local-sync.user.js
+          grep -q '@version      2.9.3' chatgpt-local-sync.user.js
+          grep -q '@license      MIT' chatgpt-local-sync.user.js
+          rm -rf .publish-payload
+          rm -f .github/workflows/publish-userscript.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Publish full userscript v2.9.3"
+          git push
