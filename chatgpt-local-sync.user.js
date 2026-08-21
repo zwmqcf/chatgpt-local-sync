@@ -1,19 +1,18 @@
 // ==UserScript==
 // @name         AI 对话流转｜ChatGPT 对话导出与整理
 // @namespace    local.only.chatgpt.incremental.exporter
-// @version      2.9.3
-// @description  将 ChatGPT 对话增量同步到本地，支持自动分类、整理和按需提取为 JSON / Markdown。
+// @version      2.9.4
+// @description  将 ChatGPT 对话增量同步到本地，支持自动分类、整理和按需提取为 JSON / Markdown。修复 conversations 分页 total 跨页变化兼容性。
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document_idle
 // @grant        none
-// @license      MIT
 // ==/UserScript==
 
 (() => {
   "use strict";
 
-  const VERSION = "2.9.3";
+  const VERSION = "2.9.4";
   const SCHEMA_VERSION = "2.4";
   const INDEX_SCHEMA_VERSION = "1.0";
   const INACTIVE_DAYS = 7;
@@ -1760,27 +1759,105 @@
     return true;
   }
 
-  async function fetchAllPages({ fetchPage, limit = 100, maxItems = 10000 }) {
-    const items = [];
-    let total = null;
-    for (let offset = 0; offset < maxItems; offset += limit) {
-      const page = await fetchPage({ offset, limit });
-      if (!page || !Array.isArray(page.items)) throw new Error(`分页 ${offset} 缺少 items`);
-      const pageTotal = Number.isFinite(Number(page.total)) ? Number(page.total) : null;
-      if (total === null && pageTotal !== null) total = pageTotal;
-      else if (pageTotal !== null && total !== pageTotal) throw new Error(`分页 total 不一致：${total} -> ${pageTotal}`);
-      if (page.items.length === 0 && total !== null && items.length < total) throw new Error(`分页提前空页：已读取 ${items.length}/${total}`);
-      items.push(...page.items);
-      if (total !== null) {
-        if (items.length > total) throw new Error(`分页读取超过 total：${items.length}/${total}`);
-        if (items.length === total) break;
-        if (page.items.length < limit) throw new Error(`分页提前结束：已读取 ${items.length}/${total}`);
-      } else if (page.items.length < limit) {
-        break;
+  async function fetchAllPages({ fetchPage, limit = 100, maxItems = 10000, maxPasses = 4 }) {
+    const idOf = (item) => String(item?.id || item?.conversation_id || "");
+    const sameIdSet = (a, b) => {
+      if (!a || !b || a.size !== b.size) return false;
+      for (const id of a) if (!b.has(id)) return false;
+      return true;
+    };
+
+    const scanOnce = async () => {
+      const items = [];
+      const seenIds = new Set();
+      const duplicateIds = new Set();
+      const reportedTotals = [];
+      let pageCount = 0;
+      let paginationComplete = false;
+
+      for (let offset = 0; offset < maxItems; offset += limit) {
+        const page = await fetchPage({ offset, limit });
+        if (!page || !Array.isArray(page.items)) throw new Error(`分页不完整：分页 ${offset} 缺少 items`);
+        pageCount += 1;
+
+        const pageTotal = Number.isFinite(Number(page.total)) ? Number(page.total) : null;
+        if (pageTotal !== null) reportedTotals.push(pageTotal);
+
+        for (const item of page.items) {
+          const id = idOf(item);
+          if (!id) throw new Error(`分页不完整：分页 ${offset} 存在缺少 conversation_id 的条目`);
+          if (seenIds.has(id)) {
+            duplicateIds.add(id);
+            continue;
+          }
+          seenIds.add(id);
+          items.push(item);
+        }
+
+        // ChatGPT 当前 conversations 接口的 total 已观察到会跨页变化。
+        // 因此 total 只作为诊断信息，不参与结束条件；实际短页才表示扫描到底。
+        if (page.items.length < limit) {
+          paginationComplete = true;
+          break;
+        }
       }
+
+      if (!paginationComplete) {
+        throw new Error(`分页不完整：超过安全上限 ${maxItems}，为避免漏导出已停止`);
+      }
+
+      return {
+        items,
+        ids: seenIds,
+        duplicateIds,
+        pageCount,
+        reportedTotals,
+        reportedTotal: reportedTotals.length ? reportedTotals[reportedTotals.length - 1] : null,
+      };
+    };
+
+    let previousStable = null;
+    let lastReason = "";
+
+    for (let pass = 1; pass <= maxPasses; pass += 1) {
+      const current = await scanOnce();
+
+      if (current.duplicateIds.size) {
+        previousStable = null;
+        lastReason = `第 ${pass} 次扫描发现 ${current.duplicateIds.size} 个重复对话`;
+        continue;
+      }
+
+      // 单页目录不存在 offset 翻页位移风险，直接接受实际读取结果。
+      if (current.pageCount === 1) {
+        return {
+          items: current.items,
+          total: current.items.length,
+          reportedTotal: current.reportedTotal,
+          reportedTotals: current.reportedTotals,
+          paginationComplete: true,
+        };
+      }
+
+      // 多页目录至少需要两次稳定扫描得到相同 Conversation ID 集合。
+      // 这样既允许服务器 total 漂移，也不会因为放宽 total 校验而静默漏页。
+      if (previousStable && sameIdSet(previousStable.ids, current.ids)) {
+        return {
+          items: current.items,
+          total: current.items.length,
+          reportedTotal: current.reportedTotal,
+          reportedTotals: current.reportedTotals,
+          paginationComplete: true,
+        };
+      }
+
+      lastReason = previousStable
+        ? `第 ${pass - 1} / ${pass} 次扫描的对话集合不一致`
+        : `第 ${pass} 次扫描需要稳定性复核`;
+      previousStable = current;
     }
-    validatePaginationCount(items.length, total);
-    return { items, total };
+
+    throw new Error(`分页不完整：目录在扫描期间持续变化（${lastReason || "未取得稳定快照"}），请稍后重试`);
   }
 
   function computeCanSync({ directoryPermission, sessionOk, interfaceOk, paginationComplete, indexUsable, rebuildOk, indexPersisted }) {
@@ -3432,38 +3509,40 @@
 
   async function fetchInventoryMode(token, archived) {
     const limit = 100;
-    let endpointUsed = "";
-    const result = await fetchAllPages({ limit, fetchPage: async ({ offset }) => {
-      let page = null;
-      const errors = [];
-      for (const base of ["/backend-api/conversations", "/api/conversations"]) {
-        const query = new URLSearchParams({ offset: String(offset), limit: String(limit), order: "updated", is_archived: String(archived) });
-        const endpoint = `${base}?${query}`;
-        try {
-          const response = await fetchWithRetry(endpoint, {
-            credentials: "include", headers: authHeaders(token), cache: "no-store",
-          }, 2);
-          if (!response.ok) {
-            errors.push(`${endpoint}: HTTP ${response.status}`);
-            continue;
-          }
-          const data = await response.json();
-          const items = Array.isArray(data) ? data : data?.items;
-          if (!Array.isArray(items)) {
-            errors.push(`${endpoint}: 缺少 items`);
-            continue;
-          }
-          page = { items, total: Number.isFinite(Number(data?.total)) ? Number(data.total) : null };
-          endpointUsed = base;
-          break;
-        } catch (error) {
-          errors.push(`${endpoint}: ${error.message}`);
-        }
+    const errors = [];
+
+    // 同一次分页扫描固定使用同一个 endpoint。
+    // 如果该 endpoint 整轮失败，只能从 offset=0 改用备用 endpoint 重新扫描，
+    // 禁止把两个 endpoint 的分页结果拼成一个目录。
+    for (const base of ["/backend-api/conversations", "/api/conversations"]) {
+      try {
+        const result = await fetchAllPages({
+          limit,
+          fetchPage: async ({ offset }) => {
+            const query = new URLSearchParams({
+              offset: String(offset),
+              limit: String(limit),
+              order: "updated",
+              is_archived: String(archived),
+            });
+            const endpoint = `${base}?${query}`;
+            const response = await fetchWithRetry(endpoint, {
+              credentials: "include", headers: authHeaders(token), cache: "no-store",
+            }, 2);
+            if (!response.ok) throw new Error(`${endpoint}: HTTP ${response.status}`);
+            const data = await response.json();
+            const items = Array.isArray(data) ? data : data?.items;
+            if (!Array.isArray(items)) throw new Error(`${endpoint}: 缺少 items`);
+            return { items, total: Number.isFinite(Number(data?.total)) ? Number(data.total) : null };
+          },
+        });
+        return { ...result, endpoint: base };
+      } catch (error) {
+        errors.push(`${base}: ${error.message}`);
       }
-      if (!page) throw new Error(errors.join("；"));
-      return page;
-    }});
-    return { ...result, endpoint: endpointUsed };
+    }
+
+    throw new Error(errors.join("；"));
   }
 
   function normalizeInventoryItem(item, archived) {
@@ -5636,4 +5715,5 @@
   if (document.readyState !== "loading") startWhenDocumentIsReady();
   else window.addEventListener("DOMContentLoaded", startWhenDocumentIsReady, { once: true });
 })();
+
 
