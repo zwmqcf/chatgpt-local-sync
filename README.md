@@ -15,7 +15,7 @@
 ## 下载与安装
 
 - **直接安装脚本：** [🚀 点击这里安装最新版用户脚本](https://raw.githubusercontent.com/zwmqcf/chatgpt-local-sync/main/chatgpt-local-sync.user.js)
-- **完整包下载：** [⬇️ 123 云盘｜脚本 + 安装教程 + 使用说明书](https://1855762805.share.123pan.cn/123pan/EKOOvd-1D943)
+- **完整包下载：** [⬇️ 123 云盘｜脚本 + 安装教程 + 使用说明书](https://1855762805.share.123pan.cn/123pan/EKOOvd-1D943?pwd=rLBW#)
 - **ScriptCat：** [🐱 AI 对话流转脚本页](https://scriptcat.org/zh-CN/script-show-page/7424)
 - **视频教程：** [🎬 B站｜ChatGPT聊天记录怎么导出到本地？2.9.85](https://www.bilibili.com/video/BV1ctbA6XELL/)
 
